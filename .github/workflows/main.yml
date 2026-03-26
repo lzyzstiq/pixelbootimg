@@ -1,9 +1,9 @@
-name: Download Pixel 8 boot.img and Email with Full Log
+name: Download Pixel 8 boot.img and Email with Full Log (Always Send)
 
 on:
-  push:                # 每次提交代码时自动触发
+  push:
     branches: [ main, master ]
-  workflow_dispatch:   # 也支持手动触发
+  workflow_dispatch:
 
 jobs:
   download:
@@ -16,16 +16,18 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y wget unzip
-        # 将安装过程的输出也记录到日志（后续通过 tee 追加）
+
+      - name: Prepare log file
+        run: touch workflow.log
 
       - name: Download factory image
+        id: download
         run: |
-          set -e
           LOG_FILE="workflow.log"
           echo "=== 开始下载工厂镜像 ===" | tee -a "$LOG_FILE"
           VERSION="BP3A.251105.015"
           echo "尝试下载官方镜像..." | tee -a "$LOG_FILE"
-          wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" 2>&1 | tee -a "$LOG_FILE" || true
+          wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" 2>&1 | tee -a "$LOG_FILE"
           if [ ! -f factory.zip ]; then
             echo "官方链接失败，尝试备用镜像站..." | tee -a "$LOG_FILE"
             wget -O factory.zip "https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/shiba-${VERSION}-factory-6e81d1c7.zip" 2>&1 | tee -a "$LOG_FILE"
@@ -35,10 +37,11 @@ jobs:
             exit 1
           fi
           echo "下载完成，文件大小：$(du -h factory.zip | cut -f1)" | tee -a "$LOG_FILE"
+        continue-on-error: true  # 即使下载失败也继续执行后续步骤
 
       - name: Extract boot.img
+        id: extract
         run: |
-          set -e
           LOG_FILE="workflow.log"
           echo "=== 提取 boot.img ===" | tee -a "$LOG_FILE"
           echo "解压工厂镜像..." | tee -a "$LOG_FILE"
@@ -66,10 +69,11 @@ jobs:
           fi
           cd ../..
           echo "提取完成，文件大小：$(du -h boot_original.img | cut -f1)" | tee -a "$LOG_FILE"
+        continue-on-error: true
 
-      - name: Send email with full log and boot.img
+      - name: Send email with full log and boot.img (always)
         uses: dawidd6/action-send-mail@v3
-
+        if: always()  # 无论前面步骤成功或失败，都发送邮件
         with:
           # 请修改以下邮箱配置（硬编码）
           server_address: "smtp.139.com"          # 改成你的 SMTP 服务器
