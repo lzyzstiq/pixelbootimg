@@ -1,4 +1,4 @@
-name: Download Pixel 8 boot.img and Email with Full Log (Always Send)
+name: Pixel 8 Boot Image Extractor
 
 on:
   push:
@@ -6,74 +6,28 @@ on:
   workflow_dispatch:
 
 jobs:
-  download:
+  extract-and-mail:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Install tools
-        run: |
-          sudo apt update
-          sudo apt install -y wget unzip
-
-      - name: Prepare log file
-        run: touch workflow.log
+        run: sudo apt update && sudo apt install -y wget unzip
 
       - name: Download factory image
-        id: download
         run: |
-          LOG_FILE="workflow.log"
-          echo "=== 开始下载工厂镜像 ===" | tee -a "$LOG_FILE"
           VERSION="BP3A.251105.015"
-          echo "尝试下载官方镜像..." | tee -a "$LOG_FILE"
-          wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" 2>&1 | tee -a "$LOG_FILE"
-          if [ ! -f factory.zip ]; then
-            echo "官方链接失败，尝试备用镜像站..." | tee -a "$LOG_FILE"
-            wget -O factory.zip "https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/shiba-${VERSION}-factory-6e81d1c7.zip" 2>&1 | tee -a "$LOG_FILE"
-          fi
-          if [ ! -f factory.zip ]; then
-            echo "下载失败" | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          echo "下载完成，文件大小：$(du -h factory.zip | cut -f1)" | tee -a "$LOG_FILE"
-        continue-on-error: true  # 即使下载失败也继续执行后续步骤
+          wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" || \
+          wget -O factory.zip "https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/shiba-${VERSION}-factory-6e81d1c7.zip"
 
       - name: Extract boot.img
-        id: extract
         run: |
-          LOG_FILE="workflow.log"
-          echo "=== 提取 boot.img ===" | tee -a "$LOG_FILE"
-          echo "解压工厂镜像..." | tee -a "$LOG_FILE"
-          unzip -qo factory.zip -d factory_image 2>&1 | tee -a "$LOG_FILE"
+          unzip -qo factory.zip -d factory_image
           cd factory_image
-          echo "查找内部镜像包..." | tee -a "$LOG_FILE"
-          IMAGE_ZIP=$(ls image-*.zip 2>/dev/null | head -n1)
-          if [ -z "$IMAGE_ZIP" ]; then
-            echo "错误：未找到 image-*.zip 文件，目录内容：" | tee -a "$LOG_FILE"
-            ls -lR | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          echo "找到镜像包: $IMAGE_ZIP" | tee -a "$LOG_FILE"
-          echo "解压镜像包..." | tee -a "$LOG_FILE"
-          unzip -qo "$IMAGE_ZIP" -d extracted 2>&1 | tee -a "$LOG_FILE"
-          cd extracted
-          echo "查找 boot.img..." | tee -a "$LOG_FILE"
-          if [ -f boot.img ]; then
-            cp boot.img ../../boot_original.img
-            echo "boot.img 已复制" | tee -a "$LOG_FILE"
-          else
-            echo "错误：未找到 boot.img，目录内容：" | tee -a "$LOG_FILE"
-            ls -l | tee -a "$LOG_FILE"
-            exit 1
-          fi
-          cd ../..
-          echo "提取完成，文件大小：$(du -h boot_original.img | cut -f1)" | tee -a "$LOG_FILE"
-        continue-on-error: true
+          unzip -qo image-*.zip -d extracted
+          cp extracted/boot.img ../boot_original.img
+          cd ..
 
-      - name: Send email with full log and boot.img (always)
+      - name: Send email with boot.img
         uses: dawidd6/action-send-mail@v3
-        if: always()  # 无论前面步骤成功或失败，都发送邮件
         with:
           # 请修改以下邮箱配置（硬编码）
           server_address: "smtp.139.com"          # 改成你的 SMTP 服务器
@@ -95,4 +49,3 @@ jobs:
             本邮件由 GitHub Actions 自动发送。
           attachments: |
             boot_original.img
-            workflow.logg
