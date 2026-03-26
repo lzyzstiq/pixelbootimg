@@ -1,0 +1,64 @@
+name: Download Pixel 8 boot.img and Email
+
+on:
+  workflow_dispatch:
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt update && sudo apt install -y wget unzip
+
+      - name: Download factory image (hardcoded version)
+        run: |
+          # 版本硬编码
+          VERSION="BP3A.251105.015"
+          # 官方链接（可能有效）
+          wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" || true
+          if [ ! -f factory.zip ]; then
+            # 备用镜像站
+            wget -O factory.zip "https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/shiba-${VERSION}-factory-6e81d1c7.zip"
+          fi
+          if [ ! -f factory.zip ]; then
+            echo "下载失败"
+            exit 1
+          fi
+
+      - name: Extract boot.img
+        run: |
+          unzip factory.zip -d factory_image
+          cd factory_image
+          IMAGE_ZIP=$(ls image-*.zip)
+          unzip "$IMAGE_ZIP" -d extracted
+          cd extracted
+          # 提取 boot.img（APatch 需要）
+          cp boot.img ../../boot_original.img
+          cd ../..
+          ls -l boot_original.img
+
+      - name: Send email with attachment
+        uses: dawidd6/action-send-mail@v3
+        with:
+          # 请修改以下邮箱配置（硬编码）
+          server_address: "smtp.139.com"          # 改成你的 SMTP 服务器
+          server_port: 25
+          username: "lzyzstiq@139.com"          # 改成你的邮箱地址
+          password: "@15368291z"           # 改成你的密码/授权码
+          subject: "Pixel 8 boot.img for BP3A.251105.015"
+          to: "lzyzstiq@139.com"       # 接收邮箱
+          from: "GitHub Actions <your-email@gmail.com>"
+          body: |
+            您好，
+            您请求的 Pixel 8 官方镜像中的 boot.img 已提取成功。
+            版本：BP3A.251105.015
+            文件大小：$(du -h boot_original.img | cut -f1)
+            
+            使用方法：用 APatch 修补此文件，然后刷入 boot 分区。
+            
+            -- 
+            本邮件由 GitHub Actions 自动发送。
+          attachments: boot_original.img
