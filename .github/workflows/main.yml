@@ -1,20 +1,28 @@
-name: Pixel 8 Boot Image Extractor
+name: Pixel 8 Boot Image Release on Push
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+  push:                    # 任何 push 事件（包括提交、合并）都会触发
+    branches:
+      - main              # 可以限制分支，去掉则所有分支都触发
+      - master
+
+permissions:
+  contents: write          # 需要写入权限才能创建 Release
 
 jobs:
-  extract-and-mail:
+  extract-and-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Install tools
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
         run: sudo apt update && sudo apt install -y wget unzip
 
       - name: Download factory image
         run: |
           VERSION="BP3A.251105.015"
+          echo "Downloading factory image for version $VERSION"
           wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" || \
           wget -O factory.zip "https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/shiba-${VERSION}-factory-6e81d1c7.zip"
 
@@ -26,26 +34,16 @@ jobs:
           cp extracted/boot.img ../boot_original.img
           cd ..
 
-      - name: Send email with boot.img
-        uses: dawidd6/action-send-mail@v3
+      - name: Create Release with unique tag
+        id: create_release
+        uses: softprops/action-gh-release@v1
         with:
-          # 请修改以下邮箱配置（硬编码）
-          server_address: "smtp.139.com"          # 改成你的 SMTP 服务器
-          server_port: 25
-          username: "lzyzstiq@139.com"          # 改成你的邮箱地址
-          password: "@15368291z"           # 改成你的密码/授权码
-          subject: "Pixel 8 boot.img for BP3A.251105.015"
-          to: "lzyzstiq@139.com"       # 接收邮箱
-          from: "GitHub Actions <your-email@gmail.com>"
+          tag_name: bootimg-${{ github.run_number }}-${{ github.run_attempt }}
+          name: "Pixel 8 boot.img (Build ${{ github.run_number }})"
           body: |
-            您好，
-            您请求的 Pixel 8 官方镜像中的 boot.img 已提取成功。
-            版本：BP3A.251105.015
-            文件大小：$(du -h boot_original.img | cut -f1)
-            
-            使用方法：用 APatch 修补此文件，然后刷入 boot 分区。
-            
-            -- 
-            本邮件由 GitHub Actions 自动发送。
-          attachments: |
-            boot_original.img
+            Pixel 8 版本 BP3A.251105.015 的 boot.img（适用于 APatch）。
+            提取时间：${{ github.event.head_commit.timestamp }}
+            触发提交：${{ github.event.head_commit.message }}
+          files: boot_original.img
+          draft: false
+          prerelease: false
