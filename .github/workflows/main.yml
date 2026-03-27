@@ -1,44 +1,77 @@
-name: Download Pixel 8 Factory Image (Dynamic)
+name: Download Factory Image from Multiple Sources
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main, master ]
-  workflow_dispatch:
 
 jobs:
   download:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y wget jq
+        run: sudo apt update && sudo apt install -y wget curl
 
-      - name: Get factory image filename from lolinet
-        id: get_filename
+      - name: Set version
+        id: vars
+        run: echo "VERSION=BP3A.251105.015" >> $GITHUB_OUTPUT
+
+      - name: Try lolinet (dynamic filename)
+        id: lolinet
         run: |
-          VERSION="BP3A.251105.015"
-          # 获取 lolinet 目录列表
+          VERSION="${{ steps.vars.outputs.VERSION }}"
           DIR_URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/"
-          # 列出目录下的文件，筛选包含版本号的行，提取文件名
-          FILENAME=$(wget -qO- "$DIR_URL" | grep -oP "shiba-${VERSION}-factory-[a-f0-9]+\.zip" | head -n1)
-          if [ -z "$FILENAME" ]; then
-            echo "未找到匹配的工厂镜像文件"
-            exit 1
+          echo "Fetching directory listing from $DIR_URL"
+          PAGE=$(curl -sL "$DIR_URL")
+          FILENAME=$(echo "$PAGE" | grep -oP "shiba-${VERSION}-factory-[a-f0-9]{8,}\.zip" | head -n1)
+          if [ -n "$FILENAME" ]; then
+            URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/$FILENAME"
+            echo "Found: $URL"
+            wget -O factory.zip "$URL" && echo "lolinet=success" >> $GITHUB_OUTPUT
+          else
+            echo "lolinet=fail" >> $GITHUB_OUTPUT
           fi
-          echo "FILENAME=$FILENAME" >> $GITHUB_OUTPUT
-          echo "找到文件: $FILENAME"
 
-      - name: Download factory image
+      - name: Try Google OTA page (dynamic)
+        if: steps.lolinet.outputs.lolinet != 'success'
         run: |
-          VERSION="BP3A.251105.015"
-          FILENAME="${{ steps.get_filename.outputs.FILENAME }}"
-          URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/$FILENAME"
-          echo "下载地址: $URL"
-          wget -O factory.zip "$URL"
-          if [ ! -f factory.zip ]; then
-            echo "下载失败！"
+          VERSION="${{ steps.vars.outputs.VERSION }}"
+          PAGE_URL="https://developers.google.com/android/ota"
+          echo "Fetching OTA page"
+          PAGE=$(curl -sL "$PAGE_URL")
+          FILENAME=$(echo "$PAGE" | grep -oP "shiba-ota-${VERSION,,}-[a-f0-9]{8,}\.zip" | head -n1)
+          if [ -n "$FILENAME" ]; then
+            URL="https://dl.google.com/dl/android/aosp/$FILENAME"
+            echo "Found: $URL"
+            wget -O factory.zip "$URL" && echo "google_ota=success" >> $GITHUB_OUTPUT
+          else
+            echo "google_ota=fail" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Try Google factory page (fallback)
+        if: steps.lolinet.outputs.lolinet != 'success' && steps.google_ota.outputs.google_ota != 'success'
+        run: |
+          VERSION="${{ steps.vars.outputs.VERSION }}"
+          PAGE_URL="https://developers.google.com/android/images"
+          echo "Fetching factory images page"
+          PAGE=$(curl -sL "$PAGE_URL")
+          FILENAME=$(echo "$PAGE" | grep -oP "shiba-${VERSION}-factory-[a-f0-9]{8,}\.zip" | head -n1)
+          if [ -n "$FILENAME" ]; then
+            URL="https://dl.google.com/dl/android/aosp/$FILENAME"
+            echo "Found: $URL"
+            wget -O factory.zip "$URL"
+          else
+            echo "All sources failed"
             exit 1
           fi
-          echo "下载完成，文件大小: $(du -h factory.zip | cut -f1)"
+
+      - name: Verify download
+        run: |
+          if [ ! -f factory.zip ] || [ $(stat -c%s factory.zip) -lt 100000000 ]; then
+            echo "Download failed or file too small"
+            exit 1
+          fi
+          echo "Download successful, size: $(du -h factory.zip | cut -f1)"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
