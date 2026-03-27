@@ -1,25 +1,39 @@
-name: Download Pixel 8 Factory Image (Artifact)
+name: Download Pixel 8 Factory Image (Dynamic)
 
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:      # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   download:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y wget
+        run: sudo apt update && sudo apt install -y wget jq
+
+      - name: Get factory image filename from lolinet
+        id: get_filename
+        run: |
+          VERSION="BP3A.251105.015"
+          # 获取 lolinet 目录列表
+          DIR_URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/"
+          # 列出目录下的文件，筛选包含版本号的行，提取文件名
+          FILENAME=$(wget -qO- "$DIR_URL" | grep -oP "shiba-${VERSION}-factory-[a-f0-9]+\.zip" | head -n1)
+          if [ -z "$FILENAME" ]; then
+            echo "未找到匹配的工厂镜像文件"
+            exit 1
+          fi
+          echo "FILENAME=$FILENAME" >> $GITHUB_OUTPUT
+          echo "找到文件: $FILENAME"
 
       - name: Download factory image
         run: |
           VERSION="BP3A.251105.015"
-          echo "正在下载工厂镜像 (版本: $VERSION) ..."
-          # 尝试官方源
-          wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" || \
-          # 失败则尝试镜像站
-          wget -O factory.zip "https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/shiba-${VERSION}-factory-6e81d1c7.zip"
+          FILENAME="${{ steps.get_filename.outputs.FILENAME }}"
+          URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/$FILENAME"
+          echo "下载地址: $URL"
+          wget -O factory.zip "$URL"
           if [ ! -f factory.zip ]; then
             echo "下载失败！"
             exit 1
@@ -31,4 +45,4 @@ jobs:
         with:
           name: pixel8-factory-image
           path: factory.zip
-          retention-days: 90   # 保留90天，足够你下载
+          retention-days: 90
