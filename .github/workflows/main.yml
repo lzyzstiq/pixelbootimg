@@ -1,49 +1,34 @@
-name: Pixel 8 Boot Image Release on Push
+name: Download Pixel 8 Factory Image (Artifact)
 
 on:
-  push:                    # 任何 push 事件（包括提交、合并）都会触发
-    branches:
-      - main              # 可以限制分支，去掉则所有分支都触发
-      - master
-
-permissions:
-  contents: write          # 需要写入权限才能创建 Release
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:      # 允许手动触发
 
 jobs:
-  extract-and-release:
+  download:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y wget unzip
+        run: sudo apt update && sudo apt install -y wget
 
       - name: Download factory image
         run: |
           VERSION="BP3A.251105.015"
-          echo "Downloading factory image for version $VERSION"
+          echo "正在下载工厂镜像 (版本: $VERSION) ..."
+          # 尝试官方源
           wget -O factory.zip "https://dl.google.com/dl/android/aosp/shiba-${VERSION}-factory-6e81d1c7.zip" || \
+          # 失败则尝试镜像站
           wget -O factory.zip "https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/shiba-${VERSION}-factory-6e81d1c7.zip"
+          if [ ! -f factory.zip ]; then
+            echo "下载失败！"
+            exit 1
+          fi
+          echo "下载完成，文件大小: $(du -h factory.zip | cut -f1)"
 
-      - name: Extract boot.img
-        run: |
-          unzip -qo factory.zip -d factory_image
-          cd factory_image
-          unzip -qo image-*.zip -d extracted
-          cp extracted/boot.img ../boot_original.img
-          cd ..
-
-      - name: Create Release with unique tag
-        id: create_release
-        uses: softprops/action-gh-release@v1
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: bootimg-${{ github.run_number }}-${{ github.run_attempt }}
-          name: "Pixel 8 boot.img (Build ${{ github.run_number }})"
-          body: |
-            Pixel 8 版本 BP3A.251105.015 的 boot.img（适用于 APatch）。
-            提取时间：${{ github.event.head_commit.timestamp }}
-            触发提交：${{ github.event.head_commit.message }}
-          files: boot_original.img
-          draft: false
-          prerelease: false
+          name: pixel8-factory-image
+          path: factory.zip
+          retention-days: 90   # 保留90天，足够你下载
