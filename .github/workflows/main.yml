@@ -1,4 +1,4 @@
-name: Download OTA and Extract boot.img
+name: Download Factory Image and Extract boot.img
 
 on:
   workflow_dispatch:
@@ -10,72 +10,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
+        run: sudo apt update && sudo apt install -y wget unzip
+
+      - name: Fetch factory images page
+        id: fetch
         run: |
-          sudo apt update
-          sudo apt install -y wget curl unzip python3-pip
+          PAGE_URL="https://developers.google.com/android/images"
+          echo "Fetching $PAGE_URL ..."
+          curl -sL -A "Mozilla/5.0" "$PAGE_URL" -o factory_page.html
 
-      - name: Install payload-dumper
-        run: pip3 install payload-dumper
-
-      - name: Fetch OTA page and get download URL
+      - name: Extract download URL for Pixel 8 (shiba) version BP3A.251105.015
         id: get_url
         run: |
           VERSION="BP3A.251105.015"
-          PAGE_URL="https://developers.google.com/android/ota"
-          echo "Fetching OTA page..."
-          # 下载页面并保存，同时打印前30行用于调试
-          curl -sL -A "Mozilla/5.0" "$PAGE_URL" -o ota_page.html
-          echo "=== 页面前30行（调试） ==="
-          head -n 30 ota_page.html
-          echo ""
-          echo "=== 提取所有 shiba-ota 链接 ==="
-          # 提取所有包含 shiba-ota 的 zip 文件名（不区分大小写）
-          ALL_OTA=$(grep -iPo 'shiba-ota-[a-f0-9.-]+\.zip' ota_page.html | sort -u)
-          if [ -n "$ALL_OTA" ]; then
-            echo "找到的 OTA 文件列表:"
-            echo "$ALL_OTA"
-          else
-            echo "未找到任何 OTA 链接"
+          # 从页面中提取包含 shiba 和版本号的工厂镜像链接
+          # 格式类似: shiba-bp3a.251105.015-factory-6e81d1c7.zip
+          ZIP_FILE=$(grep -oP "shiba-${VERSION}-factory-[a-f0-9]{8,}\.zip" factory_page.html | head -n1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "未找到匹配的工厂镜像文件，请检查版本号"
+            exit 1
           fi
-          echo ""
-          echo "=== 尝试匹配精确版本 ==="
-          # 将版本号转为小写进行比较（因为页面中可能是小写）
-          VERSION_LOWER=$(echo "$VERSION" | tr '[:upper:]' '[:lower:]')
-          OTA_FILE=$(echo "$ALL_OTA" | grep -i "$VERSION_LOWER" | head -n1)
-          if [ -z "$OTA_FILE" ]; then
-            echo "未找到匹配版本 $VERSION 的 OTA 包，尝试使用第一个可用包"
-            OTA_FILE=$(echo "$ALL_OTA" | head -n1)
-            if [ -z "$OTA_FILE" ]; then
-              echo "未找到任何 OTA 包，请检查页面结构或手动指定链接"
-              exit 1
-            fi
-            echo "使用第一个 OTA 包: $OTA_FILE"
-          else
-            echo "找到匹配的 OTA 包: $OTA_FILE"
-          fi
-          DOWNLOAD_URL="https://dl.google.com/dl/android/aosp/$OTA_FILE"
-          echo "下载地址: $DOWNLOAD_URL"
+          DOWNLOAD_URL="https://dl.google.com/dl/android/aosp/$ZIP_FILE"
+          echo "Found: $DOWNLOAD_URL"
           echo "url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
 
-      - name: Download OTA package
+      - name: Download factory image
         run: |
           URL="${{ steps.get_url.outputs.url }}"
-          echo "Downloading OTA from $URL"
-          wget -O ota.zip "$URL"
-          if [ ! -f ota.zip ]; then
+          echo "Downloading factory image from $URL"
+          wget -O factory.zip "$URL"
+          if [ ! -f factory.zip ]; then
             echo "下载失败"
             exit 1
           fi
-          echo "下载完成，文件大小: $(du -h ota.zip | cut -f1)"
+          echo "下载完成，文件大小: $(du -h factory.zip | cut -f1)"
 
-      - name: Extract boot.img from OTA
+      - name: Extract boot.img
         run: |
-          unzip ota.zip -d ota_extract
-          cd ota_extract
-          # 解压 payload.bin（payload-dumper 会读取它）
-          payload-dumper payload.bin
-          # 输出目录为 output/
-          cp output/boot.img ../boot_original.img
+          unzip factory.zip -d factory_image
+          cd factory_image
+          # 找到内部的镜像包 (image-shiba-*.zip)
+          IMAGE_ZIP=$(ls image-*.zip 2>/dev/null | head -n1)
+          if [ -z "$IMAGE_ZIP" ]; then
+            echo "未找到 image-*.zip 文件"
+            exit 1
+          fi
+          unzip "$IMAGE_ZIP" -d extracted
+          cp extracted/boot.img ../boot_original.img
           cd ..
           ls -lh boot_original.img
 
