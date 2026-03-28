@@ -1,4 +1,4 @@
-name: Download Factory Image from Multiple Sources
+name: Source Connectivity Test
 
 on:
   workflow_dispatch:
@@ -6,76 +6,79 @@ on:
     branches: [ main, master ]
 
 jobs:
-  download:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Install dependencies
-        run: sudo apt update && sudo apt install -y wget curl
+      - name: Install curl
+        run: sudo apt update && sudo apt install -y curl
 
-      - name: Set version
-        id: vars
-        run: echo "VERSION=BP3A.251105.015" >> $GITHUB_OUTPUT
-
-      - name: Try lolinet (dynamic filename)
-        id: lolinet
+      - name: Test Google official factory image (hardcoded hash)
         run: |
-          VERSION="${{ steps.vars.outputs.VERSION }}"
-          DIR_URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/"
-          echo "Fetching directory listing from $DIR_URL"
-          PAGE=$(curl -sL "$DIR_URL")
-          FILENAME=$(echo "$PAGE" | grep -oP "shiba-${VERSION}-factory-[a-f0-9]{8,}\.zip" | head -n1)
-          if [ -n "$FILENAME" ]; then
-            URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/$FILENAME"
-            echo "Found: $URL"
-            wget -O factory.zip "$URL" && echo "lolinet=success" >> $GITHUB_OUTPUT
+          echo "=== 测试 Google 官方工厂镜像（带固定哈希）==="
+          URL="https://dl.google.com/dl/android/aosp/shiba-bp3a.251105.015-factory-6e81d1c7.zip"
+          echo "URL: $URL"
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
+          echo "HTTP状态: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ 官方链接可用"
           else
-            echo "lolinet=fail" >> $GITHUB_OUTPUT
+            echo "❌ 官方链接不可用（可能文件不存在或网络不通）"
           fi
+          echo ""
 
-      - name: Try Google OTA page (dynamic)
-        if: steps.lolinet.outputs.lolinet != 'success'
+      - name: Test Google factory image directory (dynamic)
         run: |
-          VERSION="${{ steps.vars.outputs.VERSION }}"
-          PAGE_URL="https://developers.google.com/android/ota"
-          echo "Fetching OTA page"
-          PAGE=$(curl -sL "$PAGE_URL")
-          FILENAME=$(echo "$PAGE" | grep -oP "shiba-ota-${VERSION,,}-[a-f0-9]{8,}\.zip" | head -n1)
-          if [ -n "$FILENAME" ]; then
-            URL="https://dl.google.com/dl/android/aosp/$FILENAME"
-            echo "Found: $URL"
-            wget -O factory.zip "$URL" && echo "google_ota=success" >> $GITHUB_OUTPUT
+          echo "=== 测试 Google 工厂镜像列表页 ==="
+          URL="https://developers.google.com/android/images"
+          echo "URL: $URL"
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
+          echo "HTTP状态: $STATUS"
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ 列表页可访问"
           else
-            echo "google_ota=fail" >> $GITHUB_OUTPUT
+            echo "❌ 列表页不可访问"
           fi
+          echo ""
 
-      - name: Try Google factory page (fallback)
-        if: steps.lolinet.outputs.lolinet != 'success' && steps.google_ota.outputs.google_ota != 'success'
+      - name: Test Google OTA page
         run: |
-          VERSION="${{ steps.vars.outputs.VERSION }}"
-          PAGE_URL="https://developers.google.com/android/images"
-          echo "Fetching factory images page"
-          PAGE=$(curl -sL "$PAGE_URL")
-          FILENAME=$(echo "$PAGE" | grep -oP "shiba-${VERSION}-factory-[a-f0-9]{8,}\.zip" | head -n1)
-          if [ -n "$FILENAME" ]; then
-            URL="https://dl.google.com/dl/android/aosp/$FILENAME"
-            echo "Found: $URL"
-            wget -O factory.zip "$URL"
-          else
-            echo "All sources failed"
-            exit 1
-          fi
+          echo "=== 测试 Google OTA 页面 ==="
+          URL="https://developers.google.com/android/ota"
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
+          echo "HTTP状态: $STATUS"
+          [ "$STATUS" = "200" ] && echo "✅ OTA页面可访问" || echo "❌ OTA页面不可访问"
+          echo ""
 
-      - name: Verify download
+      - name: Test lolinet factory directory
         run: |
-          if [ ! -f factory.zip ] || [ $(stat -c%s factory.zip) -lt 100000000 ]; then
-            echo "Download failed or file too small"
-            exit 1
-          fi
-          echo "Download successful, size: $(du -h factory.zip | cut -f1)"
+          echo "=== 测试 lolinet 工厂镜像目录 ==="
+          URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/"
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
+          echo "HTTP状态: $STATUS"
+          [ "$STATUS" = "200" ] && echo "✅ lolinet工厂目录可访问" || echo "❌ lolinet工厂目录不可访问"
+          echo ""
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pixel8-factory-image
-          path: factory.zip
-          retention-days: 90
+      - name: Test lolinet OTA directory
+        run: |
+          echo "=== 测试 lolinet OTA 目录 ==="
+          URL="https://mirrors.lolinet.com/firmware/google/shiba/ota/"
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
+          echo "HTTP状态: $STATUS"
+          [ "$STATUS" = "200" ] && echo "✅ lolinet OTA目录可访问" || echo "❌ lolinet OTA目录不可访问"
+          echo ""
+
+      - name: Test GitHub Release (placeholder)
+        run: |
+          echo "=== 测试 GitHub Release（你自己的仓库）==="
+          # 这里需要替换为你的实际仓库和Release标签
+          # 示例：https://github.com/你的用户名/你的仓库/releases/download/v1.0/factory.zip
+          echo "请手动测试你仓库的Release链接，确保文件已上传"
+          echo "示例链接: https://github.com/用户名/仓库名/releases/download/tag/文件名.zip"
+          echo ""
+
+      - name: Summary
+        run: |
+          echo "========== 连通性测试汇总 =========="
+          echo "请查看上述各步骤的 HTTP 状态码。"
+          echo "如果某个源返回 200，则可在工作流中使用它进行下载。"
+          echo "如果所有源均不可用，可能需要考虑自托管运行器或代理。"
