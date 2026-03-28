@@ -1,4 +1,4 @@
-name: Source Connectivity Test
+name: Download OTA and Extract boot.img
 
 on:
   workflow_dispatch:
@@ -6,79 +6,60 @@ on:
     branches: [ main, master ]
 
 jobs:
-  test:
+  extract:
     runs-on: ubuntu-latest
     steps:
-      - name: Install curl
-        run: sudo apt update && sudo apt install -y curl
-
-      - name: Test Google official factory image (hardcoded hash)
+      - name: Install dependencies
         run: |
-          echo "=== 测试 Google 官方工厂镜像（带固定哈希）==="
-          URL="https://dl.google.com/dl/android/aosp/shiba-bp3a.251105.015-factory-6e81d1c7.zip"
-          echo "URL: $URL"
-          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
-          echo "HTTP状态: $STATUS"
-          if [ "$STATUS" = "200" ]; then
-            echo "✅ 官方链接可用"
-          else
-            echo "❌ 官方链接不可用（可能文件不存在或网络不通）"
+          sudo apt update
+          sudo apt install -y wget curl unzip python3-pip
+
+      - name: Install payload-dumper
+        run: pip3 install payload-dumper
+
+      - name: Fetch OTA page and get download URL
+        id: get_url
+        run: |
+          VERSION="BP3A.251105.015"
+          PAGE_URL="https://developers.google.com/android/ota"
+          echo "Fetching OTA page..."
+          # 下载页面并提取包含版本号的 OTA 包文件名
+          # 文件名格式类似：shiba-ota-BP3A.251105.015-xxxxxxxx.zip
+          # 注意：版本号在页面中可能以小写形式出现，因此使用 grep -i
+          OTA_FILE=$(curl -sL "$PAGE_URL" | grep -iPo "shiba-ota-${VERSION}-[a-f0-9]{8,}\.zip" | head -n1)
+          if [ -z "$OTA_FILE" ]; then
+            echo "未找到匹配的 OTA 包，请检查版本号"
+            exit 1
           fi
-          echo ""
+          DOWNLOAD_URL="https://dl.google.com/dl/android/aosp/$OTA_FILE"
+          echo "Found OTA: $OTA_FILE"
+          echo "url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
 
-      - name: Test Google factory image directory (dynamic)
+      - name: Download OTA package
         run: |
-          echo "=== 测试 Google 工厂镜像列表页 ==="
-          URL="https://developers.google.com/android/images"
-          echo "URL: $URL"
-          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
-          echo "HTTP状态: $STATUS"
-          if [ "$STATUS" = "200" ]; then
-            echo "✅ 列表页可访问"
-          else
-            echo "❌ 列表页不可访问"
+          URL="${{ steps.get_url.outputs.url }}"
+          echo "Downloading OTA from $URL"
+          wget -O ota.zip "$URL"
+          if [ ! -f ota.zip ]; then
+            echo "下载失败"
+            exit 1
           fi
-          echo ""
+          echo "下载完成，文件大小: $(du -h ota.zip | cut -f1)"
 
-      - name: Test Google OTA page
+      - name: Extract boot.img from OTA
         run: |
-          echo "=== 测试 Google OTA 页面 ==="
-          URL="https://developers.google.com/android/ota"
-          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
-          echo "HTTP状态: $STATUS"
-          [ "$STATUS" = "200" ] && echo "✅ OTA页面可访问" || echo "❌ OTA页面不可访问"
-          echo ""
+          unzip ota.zip -d ota_extract
+          cd ota_extract
+          # 解压 payload.bin（payload-dumper 会读取它）
+          payload-dumper payload.bin
+          # 输出目录为 output/
+          cp output/boot.img ../boot_original.img
+          cd ..
+          ls -lh boot_original.img
 
-      - name: Test lolinet factory directory
-        run: |
-          echo "=== 测试 lolinet 工厂镜像目录 ==="
-          URL="https://mirrors.lolinet.com/firmware/google/shiba/2025/factory/"
-          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
-          echo "HTTP状态: $STATUS"
-          [ "$STATUS" = "200" ] && echo "✅ lolinet工厂目录可访问" || echo "❌ lolinet工厂目录不可访问"
-          echo ""
-
-      - name: Test lolinet OTA directory
-        run: |
-          echo "=== 测试 lolinet OTA 目录 ==="
-          URL="https://mirrors.lolinet.com/firmware/google/shiba/ota/"
-          STATUS=$(curl -o /dev/null -s -w "%{http_code}" -L --max-time 10 "$URL")
-          echo "HTTP状态: $STATUS"
-          [ "$STATUS" = "200" ] && echo "✅ lolinet OTA目录可访问" || echo "❌ lolinet OTA目录不可访问"
-          echo ""
-
-      - name: Test GitHub Release (placeholder)
-        run: |
-          echo "=== 测试 GitHub Release（你自己的仓库）==="
-          # 这里需要替换为你的实际仓库和Release标签
-          # 示例：https://github.com/你的用户名/你的仓库/releases/download/v1.0/factory.zip
-          echo "请手动测试你仓库的Release链接，确保文件已上传"
-          echo "示例链接: https://github.com/用户名/仓库名/releases/download/tag/文件名.zip"
-          echo ""
-
-      - name: Summary
-        run: |
-          echo "========== 连通性测试汇总 =========="
-          echo "请查看上述各步骤的 HTTP 状态码。"
-          echo "如果某个源返回 200，则可在工作流中使用它进行下载。"
-          echo "如果所有源均不可用，可能需要考虑自托管运行器或代理。"
+      - name: Upload boot.img artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixel8-boot-img
+          path: boot_original.img
+          retention-days: 90
