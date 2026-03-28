@@ -23,16 +23,38 @@ jobs:
           VERSION="BP3A.251105.015"
           PAGE_URL="https://developers.google.com/android/ota"
           echo "Fetching OTA page..."
-          # 下载页面并提取包含版本号的 OTA 包文件名
-          # 文件名格式类似：shiba-ota-BP3A.251105.015-xxxxxxxx.zip
-          # 注意：版本号在页面中可能以小写形式出现，因此使用 grep -i
-          OTA_FILE=$(curl -sL "$PAGE_URL" | grep -iPo "shiba-ota-${VERSION}-[a-f0-9]{8,}\.zip" | head -n1)
+          # 下载页面并保存，同时打印前30行用于调试
+          curl -sL -A "Mozilla/5.0" "$PAGE_URL" -o ota_page.html
+          echo "=== 页面前30行（调试） ==="
+          head -n 30 ota_page.html
+          echo ""
+          echo "=== 提取所有 shiba-ota 链接 ==="
+          # 提取所有包含 shiba-ota 的 zip 文件名（不区分大小写）
+          ALL_OTA=$(grep -iPo 'shiba-ota-[a-f0-9.-]+\.zip' ota_page.html | sort -u)
+          if [ -n "$ALL_OTA" ]; then
+            echo "找到的 OTA 文件列表:"
+            echo "$ALL_OTA"
+          else
+            echo "未找到任何 OTA 链接"
+          fi
+          echo ""
+          echo "=== 尝试匹配精确版本 ==="
+          # 将版本号转为小写进行比较（因为页面中可能是小写）
+          VERSION_LOWER=$(echo "$VERSION" | tr '[:upper:]' '[:lower:]')
+          OTA_FILE=$(echo "$ALL_OTA" | grep -i "$VERSION_LOWER" | head -n1)
           if [ -z "$OTA_FILE" ]; then
-            echo "未找到匹配的 OTA 包，请检查版本号"
-            exit 1
+            echo "未找到匹配版本 $VERSION 的 OTA 包，尝试使用第一个可用包"
+            OTA_FILE=$(echo "$ALL_OTA" | head -n1)
+            if [ -z "$OTA_FILE" ]; then
+              echo "未找到任何 OTA 包，请检查页面结构或手动指定链接"
+              exit 1
+            fi
+            echo "使用第一个 OTA 包: $OTA_FILE"
+          else
+            echo "找到匹配的 OTA 包: $OTA_FILE"
           fi
           DOWNLOAD_URL="https://dl.google.com/dl/android/aosp/$OTA_FILE"
-          echo "Found OTA: $OTA_FILE"
+          echo "下载地址: $DOWNLOAD_URL"
           echo "url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
 
       - name: Download OTA package
