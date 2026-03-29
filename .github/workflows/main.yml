@@ -1,4 +1,4 @@
-name: Download Factory Image and Extract boot.img
+name: Extract boot.img from Official OTA (BP3A.251105.015)
 
 on:
   workflow_dispatch:
@@ -10,59 +10,80 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
-        run: sudo apt update && sudo apt install -y wget unzip
-
-      - name: Fetch factory images page
-        id: fetch
         run: |
-          PAGE_URL="https://developers.google.com/android/images"
-          echo "Fetching $PAGE_URL ..."
-          curl -sL -A "Mozilla/5.0" "$PAGE_URL" -o factory_page.html
+          sudo apt update
+          sudo apt install -y wget unzip python3-pip
 
-      - name: Extract download URL for Pixel 8 (shiba) version BP3A.251105.015
-        id: get_url
+      - name: Install payload-dumper
+        run: pip3 install payload-dumper
+
+      # 源1: 官方 OTA 链接（优先）
+      - name: Try official OTA link
+        id: ota
+        continue-on-error: true
         run: |
-          VERSION="BP3A.251105.015"
-          # 从页面中提取包含 shiba 和版本号的工厂镜像链接
-          # 格式类似: shiba-bp3a.251105.015-factory-6e81d1c7.zip
-          ZIP_FILE=$(grep -oP "shiba-${VERSION}-factory-[a-f0-9]{8,}\.zip" factory_page.html | head -n1)
-          if [ -z "$ZIP_FILE" ]; then
-            echo "未找到匹配的工厂镜像文件，请检查版本号"
+          echo "正在从官方 OTA 链接下载..."
+          wget -O ota.zip "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
+          unzip ota.zip -d ota_extract
+          cd ota_extract
+          payload-dumper payload.bin
+          cp output/boot.img ../boot_original.img
+          cd ..
+          echo "official_ota_success=true" >> $GITHUB_ENV
+
+      # 源2: Google 官方工厂镜像（通过 images.json）
+      - name: Try Google factory image via JSON
+        if: env.official_ota_success != 'true'
+        id: factory
+        continue-on-error: true
+        run: |
+          echo "尝试从 Google 官方 JSON 获取工厂镜像..."
+          curl -sL "https://developers.google.com/android/static/images.json" -o images.json
+          URL=$(jq -r '.[] | select(.codename=="shiba") | .builds[] | select(.version=="BP3A.251105.015") | .url' images.json)
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "未找到匹配的工厂镜像"
             exit 1
           fi
-          DOWNLOAD_URL="https://dl.google.com/dl/android/aosp/$ZIP_FILE"
-          echo "Found: $DOWNLOAD_URL"
-          echo "url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
-
-      - name: Download factory image
-        run: |
-          URL="${{ steps.get_url.outputs.url }}"
-          echo "Downloading factory image from $URL"
           wget -O factory.zip "$URL"
-          if [ ! -f factory.zip ]; then
-            echo "下载失败"
-            exit 1
-          fi
-          echo "下载完成，文件大小: $(du -h factory.zip | cut -f1)"
-
-      - name: Extract boot.img
-        run: |
           unzip factory.zip -d factory_image
           cd factory_image
-          # 找到内部的镜像包 (image-shiba-*.zip)
-          IMAGE_ZIP=$(ls image-*.zip 2>/dev/null | head -n1)
-          if [ -z "$IMAGE_ZIP" ]; then
-            echo "未找到 image-*.zip 文件"
-            exit 1
-          fi
+          IMAGE_ZIP=$(ls image-*.zip | head -n1)
           unzip "$IMAGE_ZIP" -d extracted
           cp extracted/boot.img ../boot_original.img
           cd ..
-          ls -lh boot_original.img
+          echo "factory_success=true" >> $GITHUB_ENV
+
+      # 源3: lolinet OTA 动态获取
+      - name: Try lolinet OTA
+        if: env.official_ota_success != 'true' && env.factory_success != 'true'
+        run: |
+          echo "尝试从 lolinet 获取 OTA 包..."
+          VERSION="BP3A.251105.015"
+          DIR_URL="https://mirrors.lolinet.com/firmware/google/shiba/ota/"
+          PAGE=$(curl -sL "$DIR_URL")
+          FILENAME=$(echo "$PAGE" | grep -iPo "shiba-ota-${VERSION}-[a-f0-9]{8,}\.zip" | head -n1)
+          if [ -z "$FILENAME" ]; then
+            echo "未找到匹配的 OTA 包"
+            exit 1
+          fi
+          URL="https://mirrors.lolinet.com/firmware/google/shiba/ota/$FILENAME"
+          wget -O ota.zip "$URL"
+          unzip ota.zip -d ota_extract
+          cd ota_extract
+          payload-dumper payload.bin
+          cp output/boot.img ../boot_original.img
+          cd ..
 
       - name: Upload boot.img artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: pixel8-boot-img
           path: boot_original.img
           retention-days: 90
+
+      - name: Final status
+        if: failure()
+        run: |
+          echo "所有下载源均失败，请检查日志。"
+          exit 1
