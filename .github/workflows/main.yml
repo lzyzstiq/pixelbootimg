@@ -1,105 +1,34 @@
-name: Split OTA and Email Parts
+name: Upload OTA to GitHub Release
 
 on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
 
-env:
-  OTA_URL: "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
-  PART_SIZE_MB: 100
-  SMTP_SERVER: smtp.139.com
-  SMTP_PORT_SSL: 465
-  SMTP_PORT_STARTTLS: 587
-  EMAIL_USER: lzyzstiq@139.com
-  EMAIL_PASS: "@15368291z"   # ⚠️ 请替换为授权码或密码，并确保仓库私有
+permissions:
+  contents: write   # 需要写入权限以创建 Release
 
 jobs:
-  split-and-send:
+  upload:
     runs-on: ubuntu-latest
     steps:
-      - name: Install dependencies
+      - name: Install wget
         run: sudo apt update && sudo apt install -y wget
 
       - name: Download OTA package
         run: |
-          wget -O ota.zip "$OTA_URL"
+          wget -O ota.zip "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
           echo "下载完成，大小: $(du -h ota.zip | cut -f1)"
 
-      - name: Split OTA into parts
-        run: |
-          split -b ${PART_SIZE_MB}M ota.zip ota.part.
-          ls -lh ota.part.*
-
-      - name: Send each part via email (with retry)
-        env:
-          SMTP_SERVER: ${{ env.SMTP_SERVER }}
-          SMTP_PORT_SSL: ${{ env.SMTP_PORT_SSL }}
-          SMTP_PORT_STARTTLS: ${{ env.SMTP_PORT_STARTTLS }}
-          USER: ${{ env.EMAIL_USER }}
-          PASS: ${{ env.EMAIL_PASS }}
-        run: |
-          python3 <<'EOF'
-          import smtplib
-          from email.mime.multipart import MIMEMultipart
-          from email.mime.base import MIMEBase
-          from email import encoders
-          import os
-          import time
-
-          def send_part(part_file, subject, retries=3):
-              for attempt in range(retries):
-                  # 尝试 SSL 直接连接（端口 465）
-                  try:
-                      server = smtplib.SMTP_SSL(os.environ["SMTP_SERVER"], int(os.environ["SMTP_PORT_SSL"]), timeout=30)
-                      server.login(os.environ["USER"], os.environ["PASS"])
-                      print(f"使用 SSL 连接成功")
-                  except Exception as e:
-                      print(f"SSL 连接失败: {e}")
-                      # 尝试 STARTTLS（端口 587）
-                      try:
-                          server = smtplib.SMTP(os.environ["SMTP_SERVER"], int(os.environ["SMTP_PORT_STARTTLS"]), timeout=30)
-                          server.starttls()
-                          server.login(os.environ["USER"], os.environ["PASS"])
-                          print(f"使用 STARTTLS 连接成功")
-                      except Exception as e2:
-                          print(f"STARTTLS 连接失败: {e2}")
-                          time.sleep(5)
-                          continue
-
-                  # 构造邮件
-                  msg = MIMEMultipart()
-                  msg['From'] = os.environ["USER"]
-                  msg['To'] = os.environ["USER"]
-                  msg['Subject'] = subject
-                  with open(part_file, 'rb') as f:
-                      attach = MIMEBase('application', 'octet-stream')
-                      attach.set_payload(f.read())
-                      encoders.encode_base64(attach)
-                      attach.add_header('Content-Disposition', f'attachment; filename={part_file}')
-                      msg.attach(attach)
-
-                  try:
-                      server.send_message(msg)
-                      server.quit()
-                      print(f"✅ 成功发送 {part_file}")
-                      return True
-                  except Exception as e:
-                      print(f"发送失败: {e}")
-                      server.quit()
-                      time.sleep(5)
-              return False
-
-          parts = sorted([f for f in os.listdir('.') if f.startswith('ota.part.')])
-          for part in parts:
-              suffix = part.split('.')[-1]
-              subject = f"OTA part {suffix}"
-              if send_part(part, subject):
-                  time.sleep(2)
-              else:
-                  print(f"最终发送失败: {part}")
-                  print("提示：如果一直失败，请使用邮箱授权码而非登录密码。")
-                  print("获取方法：登录 139 邮箱网页版 → 设置 → 账户安全 → 开启 SMTP/IMAP 并生成授权码。")
-                  exit(1)
-          print("所有分卷发送完成")
-          EOF
+      - name: Create Release and upload asset
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: "ota-v1"                # 可自定义版本号
+          name: "Pixel 8 OTA Package (BP3A.251105.015)"
+          body: |
+            从官方 OTA 链接下载的完整包，可用于提取 boot.img。
+            版本：BP3A.251105.015
+            文件大小：2.92 GB
+          files: ota.zip
+          draft: false
+          prerelease: false
