@@ -1,25 +1,74 @@
-name: Download OTA Package (BP3A.251105.015)
+name: Split OTA and Email Parts
 
 on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
 
+env:
+  OTA_URL: "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
+  # 分割大小（单位：M），可根据邮箱限制调整，建议 ≤ 100M
+  PART_SIZE_MB: 100
+  SMTP_SERVER: smtp.139.com
+  SMTP_PORT: 25
+  EMAIL_USER: lzyzstiq@139.com
+  EMAIL_PASS: "@15368291z"
+
 jobs:
-  download:
+  split-and-send:
     runs-on: ubuntu-latest
     steps:
-      - name: Install wget
+      - name: Install dependencies
         run: sudo apt update && sudo apt install -y wget
 
       - name: Download OTA package
         run: |
-          wget -O ota.zip "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
+          wget -O ota.zip "$OTA_URL"
           echo "下载完成，大小: $(du -h ota.zip | cut -f1)"
 
-      - name: Upload OTA artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pixel8-ota-package
-          path: ota.zip
-          retention-days: 90
+      - name: Split OTA into parts
+        run: |
+          # 使用 split 按指定大小分割，生成 ota.part.aa, ota.part.ab, ...
+          split -b ${PART_SIZE_MB}M ota.zip ota.part.
+          # 列出所有分卷
+          ls -lh ota.part.*
+
+      - name: Send each part via email
+        env:
+          SMTP_SERVER: ${{ env.SMTP_SERVER }}
+          SMTP_PORT: ${{ env.SMTP_PORT }}
+          USER: ${{ env.EMAIL_USER }}
+          PASS: ${{ env.EMAIL_PASS }}
+        run: |
+          python3 <<EOF
+          import smtplib
+          from email.mime.multipart import MIMEMultipart
+          from email.mime.base import MIMEBase
+          from email import encoders
+          import os
+
+          server = smtplib.SMTP("$SMTP_SERVER", $SMTP_PORT)
+          server.starttls()
+          server.login("$USER", "$PASS")
+
+          parts = sorted([f for f in os.listdir('.') if f.startswith('ota.part.')])
+          for part in parts:
+              msg = MIMEMultipart()
+              msg['From'] = "$USER"
+              msg['To'] = "$USER"
+              # 提取序号（如 aa, ab）作为主题
+              suffix = part.split('.')[-1]
+              msg['Subject'] = f"OTA part {suffix}"
+
+              with open(part, 'rb') as f:
+                  attach = MIMEBase('application', 'octet-stream')
+                  attach.set_payload(f.read())
+                  encoders.encode_base64(attach)
+                  attach.add_header('Content-Disposition', f'attachment; filename={part}')
+                  msg.attach(attach)
+
+              server.send_message(msg)
+              print(f"已发送 {part}")
+
+          server.quit()
+          EOF
