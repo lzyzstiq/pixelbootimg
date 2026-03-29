@@ -1,4 +1,4 @@
-name: Download Pixel 8 Factory Image (BP3A.251105.015)
+name: Download OTA Package (BP3A.251105.015)
 
 on:
   workflow_dispatch:
@@ -9,31 +9,17 @@ jobs:
   download:
     runs-on: ubuntu-latest
     steps:
-      - name: Install dependencies
-        run: sudo apt update && sudo apt install -y wget jq
+      - name: Install wget
+        run: sudo apt update && sudo apt install -y wget
 
-      - name: Fetch images.json
-        run: curl -sL "https://developers.google.com/android/static/images.json" -o images.json
-
-      - name: Get factory image URL for Pixel 8 (shiba) version BP3A.251105.015
-        id: get_url
+      - name: Download OTA package
         run: |
-          URL=$(jq -r '.[] | select(.codename=="shiba") | .builds[] | select(.version=="BP3A.251105.015") | .url' images.json)
-          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
-            echo "未找到匹配的工厂镜像"
-            exit 1
-          fi
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "下载地址: $URL"
+          wget -O ota.zip "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
+          echo "下载完成，大小: $(du -h ota.zip | cut -f1)"
 
-      - name: Download factory image
-        run: |
-          wget -O factory.zip "${{ steps.get_url.outputs.url }}"
-          echo "下载完成，大小: $(du -h factory.zip | cut -f1)"
-
-      - name: Upload factory image artifact
+      - name: Upload OTA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: pixel8-factory-image
-          path: factory.zip
+          name: pixel8-ota-package
+          path: ota.zip
           retention-days: 90
