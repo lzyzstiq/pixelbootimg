@@ -1,4 +1,4 @@
-name: Upload OTA to GitHub Release
+name: Split OTA and Upload to Release
 
 on:
   workflow_dispatch:
@@ -6,10 +6,10 @@ on:
     branches: [ main, master ]
 
 permissions:
-  contents: write   # 需要写入权限以创建 Release
+  contents: write
 
 jobs:
-  upload:
+  split-and-upload:
     runs-on: ubuntu-latest
     steps:
       - name: Install wget
@@ -20,15 +20,27 @@ jobs:
           wget -O ota.zip "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
           echo "下载完成，大小: $(du -h ota.zip | cut -f1)"
 
-      - name: Create Release and upload asset
+      - name: Split OTA into 5 parts
+        run: |
+          # 计算每个部分的大小（向上取整）
+          total=$(stat -c%s ota.zip)
+          part_size=$(( (total + 4) / 5 ))
+          split -b $part_size ota.zip ota.part.
+          # 重命名为更容易识别的名称
+          for i in ota.part.??; do
+            mv "$i" "${i/ota.part./ota-part-}"
+          done
+          # 显示分卷列表
+          ls -lh ota-part-*
+
+      - name: Create Release
+        id: create_release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: "ota-v1"                # 可自定义版本号
-          name: "Pixel 8 OTA Package (BP3A.251105.015)"
+          tag_name: "ota-split-v1"
+          name: "Pixel 8 OTA Package (split into 5 parts)"
           body: |
-            从官方 OTA 链接下载的完整包，可用于提取 boot.img。
-            版本：BP3A.251105.015
-            文件大小：2.92 GB
-          files: ota.zip
-          draft: false
-          prerelease: false
+            OTA 包大小 2.92GB，因 GitHub Release 限制拆分为 5 个分卷。
+            请下载所有分卷后合并：`cat ota-part-* > ota.zip`
+          files: |
+            ota-part-*
