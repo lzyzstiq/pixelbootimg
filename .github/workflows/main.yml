@@ -1,4 +1,4 @@
-name: Extract boot.img from Official OTA
+name: Download Pixel 8 Factory Image (BP3A.251105.015)
 
 on:
   workflow_dispatch:
@@ -6,51 +6,34 @@ on:
     branches: [ main, master ]
 
 jobs:
-  extract:
+  download:
     runs-on: ubuntu-latest
     steps:
       - name: Install dependencies
+        run: sudo apt update && sudo apt install -y wget jq
+
+      - name: Fetch images.json
+        run: curl -sL "https://developers.google.com/android/static/images.json" -o images.json
+
+      - name: Get factory image URL for Pixel 8 (shiba) version BP3A.251105.015
+        id: get_url
         run: |
-          sudo apt update
-          sudo apt install -y wget unzip python3-pip
+          URL=$(jq -r '.[] | select(.codename=="shiba") | .builds[] | select(.version=="BP3A.251105.015") | .url' images.json)
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+            echo "未找到匹配的工厂镜像"
+            exit 1
+          fi
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "下载地址: $URL"
 
-      - name: Install ota_extract
-        run: pip3 install ota-extract
-
-      - name: Download official OTA package
+      - name: Download factory image
         run: |
-          wget -O ota.zip "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
-          echo "下载完成，大小: $(du -h ota.zip | cut -f1)"
+          wget -O factory.zip "${{ steps.get_url.outputs.url }}"
+          echo "下载完成，大小: $(du -h factory.zip | cut -f1)"
 
-      - name: Extract boot.img from OTA
-        run: |
-          unzip ota.zip -d ota_extract
-          cd ota_extract
-          ota_extract payload.bin boot.img
-          cp boot.img ../boot_original.img
-          cd ..
-          ls -lh boot_original.img
-
-      - name: Send email with boot.img
-        uses: dawidd6/action-send-mail@v3
+      - name: Upload factory image artifact
+        uses: actions/upload-artifact@v4
         with:
-          server_address: smtp.139.com
-          server_port: 587
-          username: lzyzstiq@139.com
-          password: "@15368291z"
-          subject: "Pixel 8 boot.img (BP3A.251105.015)"
-          to: lzyzstiq@139.com
-          from: "GitHub Actions <lzyzstiq@139.com>"
-          body: |
-            Pixel 8 官方 OTA 包中的 boot.img 已提取成功。
-            版本：BP3A.251105.015
-            文件大小：$(du -h boot_original.img | cut -f1)
-            
-            使用方法：
-            1. 将此文件推送到手机：adb push boot_original.img /sdcard/Download/
-            2. 用 APatch 修补该文件（设置超级密钥）
-            3. 刷入修补后的镜像：fastboot flash boot 修补后的文件.img
-            4. 重启验证
-            
-            本邮件由 GitHub Actions 自动发送。
-          attachments: boot_original.img
+          name: pixel8-factory-image
+          path: factory.zip
+          retention-days: 90
