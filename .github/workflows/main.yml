@@ -1,4 +1,4 @@
-name: Extract boot.img and Email
+name: Extract boot.img from Official OTA
 
 on:
   workflow_dispatch:
@@ -14,8 +14,8 @@ jobs:
           sudo apt update
           sudo apt install -y wget unzip python3-pip
 
-      - name: Install payload-dumper
-        run: pip3 install payload-dumper
+      - name: Install ota_extract
+        run: pip3 install ota-extract
 
       - name: Download official OTA package
         run: |
@@ -26,8 +26,8 @@ jobs:
         run: |
           unzip ota.zip -d ota_extract
           cd ota_extract
-          payload-dumper payload.bin
-          cp output/boot.img ../boot_original.img
+          ota_extract payload.bin boot.img
+          cp boot.img ../boot_original.img
           cd ..
           ls -lh boot_original.img
 
