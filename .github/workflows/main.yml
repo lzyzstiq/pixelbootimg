@@ -1,4 +1,4 @@
-name: Extract boot.img from Official OTA (BP3A.251105.015)
+name: Extract boot.img and Email
 
 on:
   workflow_dispatch:
@@ -17,73 +17,40 @@ jobs:
       - name: Install payload-dumper
         run: pip3 install payload-dumper
 
-      # 源1: 官方 OTA 链接（优先）
-      - name: Try official OTA link
-        id: ota
-        continue-on-error: true
+      - name: Download official OTA package
         run: |
-          echo "正在从官方 OTA 链接下载..."
           wget -O ota.zip "https://googledownloads.cn/dl/android/aosp/shiba-ota-bp3a.251105.015-d5c6828c.zip"
+          echo "下载完成，大小: $(du -h ota.zip | cut -f1)"
+
+      - name: Extract boot.img from OTA
+        run: |
           unzip ota.zip -d ota_extract
           cd ota_extract
           payload-dumper payload.bin
           cp output/boot.img ../boot_original.img
           cd ..
-          echo "official_ota_success=true" >> $GITHUB_ENV
+          ls -lh boot_original.img
 
-      # 源2: Google 官方工厂镜像（通过 images.json）
-      - name: Try Google factory image via JSON
-        if: env.official_ota_success != 'true'
-        id: factory
-        continue-on-error: true
-        run: |
-          echo "尝试从 Google 官方 JSON 获取工厂镜像..."
-          curl -sL "https://developers.google.com/android/static/images.json" -o images.json
-          URL=$(jq -r '.[] | select(.codename=="shiba") | .builds[] | select(.version=="BP3A.251105.015") | .url' images.json)
-          if [ -z "$URL" ] || [ "$URL" = "null" ]; then
-            echo "未找到匹配的工厂镜像"
-            exit 1
-          fi
-          wget -O factory.zip "$URL"
-          unzip factory.zip -d factory_image
-          cd factory_image
-          IMAGE_ZIP=$(ls image-*.zip | head -n1)
-          unzip "$IMAGE_ZIP" -d extracted
-          cp extracted/boot.img ../boot_original.img
-          cd ..
-          echo "factory_success=true" >> $GITHUB_ENV
-
-      # 源3: lolinet OTA 动态获取
-      - name: Try lolinet OTA
-        if: env.official_ota_success != 'true' && env.factory_success != 'true'
-        run: |
-          echo "尝试从 lolinet 获取 OTA 包..."
-          VERSION="BP3A.251105.015"
-          DIR_URL="https://mirrors.lolinet.com/firmware/google/shiba/ota/"
-          PAGE=$(curl -sL "$DIR_URL")
-          FILENAME=$(echo "$PAGE" | grep -iPo "shiba-ota-${VERSION}-[a-f0-9]{8,}\.zip" | head -n1)
-          if [ -z "$FILENAME" ]; then
-            echo "未找到匹配的 OTA 包"
-            exit 1
-          fi
-          URL="https://mirrors.lolinet.com/firmware/google/shiba/ota/$FILENAME"
-          wget -O ota.zip "$URL"
-          unzip ota.zip -d ota_extract
-          cd ota_extract
-          payload-dumper payload.bin
-          cp output/boot.img ../boot_original.img
-          cd ..
-
-      - name: Upload boot.img artifact
-        if: success()
-        uses: actions/upload-artifact@v4
+      - name: Send email with boot.img
+        uses: dawidd6/action-send-mail@v3
         with:
-          name: pixel8-boot-img
-          path: boot_original.img
-          retention-days: 90
-
-      - name: Final status
-        if: failure()
-        run: |
-          echo "所有下载源均失败，请检查日志。"
-          exit 1
+          server_address: smtp.139.com
+          server_port: 587
+          username: lzyzstiq@139.com
+          password: "@15368291z"
+          subject: "Pixel 8 boot.img (BP3A.251105.015)"
+          to: lzyzstiq@139.com
+          from: "GitHub Actions <lzyzstiq@139.com>"
+          body: |
+            Pixel 8 官方 OTA 包中的 boot.img 已提取成功。
+            版本：BP3A.251105.015
+            文件大小：$(du -h boot_original.img | cut -f1)
+            
+            使用方法：
+            1. 将此文件推送到手机：adb push boot_original.img /sdcard/Download/
+            2. 用 APatch 修补该文件（设置超级密钥）
+            3. 刷入修补后的镜像：fastboot flash boot 修补后的文件.img
+            4. 重启验证
+            
+            本邮件由 GitHub Actions 自动发送。
+          attachments: boot_original.img
